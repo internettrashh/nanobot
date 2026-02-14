@@ -15,6 +15,44 @@ from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import TelegramConfig
 
 
+# Telegram enforces a 4096-character limit per text message.
+MAX_TG_LENGTH = 4096
+
+
+def _split_message(text: str, limit: int = MAX_TG_LENGTH) -> list[str]:
+    """
+    Split a message into chunks that fit within the Telegram character limit.
+
+    Tries to split on double-newlines first, then single newlines, then spaces,
+    and only hard-cuts as a last resort.  Never produces empty parts.
+    """
+    if len(text) <= limit:
+        return [text]
+
+    parts: list[str] = []
+    while text:
+        if len(text) <= limit:
+            parts.append(text)
+            break
+
+        # Try to find a natural break point (best → worst)
+        cut = -1
+        for sep in ("\n\n", "\n", " "):
+            idx = text.rfind(sep, 0, limit)
+            if idx > 0:
+                cut = idx
+                break
+
+        if cut <= 0:
+            # No good break point – hard cut
+            cut = limit
+
+        parts.append(text[:cut])
+        text = text[cut:].lstrip("\n")  # drop the leading newlines from next chunk
+
+    return [p for p in parts if p.strip()]
+
+
 def _markdown_to_telegram_html(text: str) -> str:
     """
     Convert markdown to Telegram-safe HTML.
@@ -183,30 +221,35 @@ class TelegramChannel(BaseChannel):
         if not self._app:
             logger.warning("Telegram bot not running")
             return
-        
+
         # Stop typing indicator for this chat
         self._stop_typing(msg.chat_id)
-        
+
         try:
-            # chat_id should be the Telegram chat ID (integer)
             chat_id = int(msg.chat_id)
-            # Convert markdown to Telegram HTML
-            html_content = _markdown_to_telegram_html(msg.content)
-            await self._app.bot.send_message(
-                chat_id=chat_id,
-                text=html_content,
-                parse_mode="HTML"
-            )
         except ValueError:
             logger.error(f"Invalid chat_id: {msg.chat_id}")
-        except Exception as e:
-            # Fallback to plain text if HTML parsing fails
-            logger.warning(f"HTML parse failed, falling back to plain text: {e}")
-            try:
+            return
+
+        # Try sending as HTML first, fall back to plain text on failure
+        html_content = _markdown_to_telegram_html(msg.content)
+        parts = _split_message(html_content)
+        try:
+            for part in parts:
                 await self._app.bot.send_message(
-                    chat_id=int(msg.chat_id),
-                    text=msg.content
+                    chat_id=chat_id,
+                    text=part,
+                    parse_mode="HTML",
                 )
+        except Exception as e:
+            logger.warning(f"HTML parse failed, falling back to plain text: {e}")
+            plain_parts = _split_message(msg.content)
+            try:
+                for part in plain_parts:
+                    await self._app.bot.send_message(
+                        chat_id=chat_id,
+                        text=part,
+                    )
             except Exception as e2:
                 logger.error(f"Error sending Telegram message: {e2}")
     
