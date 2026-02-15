@@ -346,6 +346,8 @@ def gateway(
         cron_service=cron,
         restrict_to_workspace=config.tools.restrict_to_workspace,
         session_manager=session_manager,
+        supermemory_api_key=config.tools.supermemory.api_key or None,
+        supermemory_container_tag=config.tools.supermemory.container_tag,
     )
     
     # Set cron callback (needs agent)
@@ -453,23 +455,29 @@ def agent(
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
         restrict_to_workspace=config.tools.restrict_to_workspace,
+        supermemory_api_key=config.tools.supermemory.api_key or None,
+        supermemory_container_tag=config.tools.supermemory.container_tag,
     )
     
-    # Show spinner when logs are off (no output to miss); skip when logs are on
+    # Show activity indicator when logs are off; skip when logs are on
     def _thinking_ctx():
         if logs:
             from contextlib import nullcontext
             return nullcontext()
-        # Animated spinner is safe to use with prompt_toolkit input handling
-        return console.status("[dim]nanobot is thinking...[/dim]", spinner="dots")
+        from nanobot.cli.activity import ActivityIndicator
+        return ActivityIndicator(console)
 
     if message:
         # Single message mode
         async def run_once():
-            with _thinking_ctx():
-                response = await agent_loop.process_direct(message, session_id)
+            ctx = _thinking_ctx()
+            with ctx:
+                callback = ctx.get_callback() if hasattr(ctx, "get_callback") else None
+                response = await agent_loop.process_direct(
+                    message, session_id, status_callback=callback
+                )
             _print_agent_response(response, render_markdown=markdown)
-        
+
         asyncio.run(run_once())
     else:
         # Interactive mode
@@ -497,8 +505,12 @@ def agent(
                         console.print("\nGoodbye!")
                         break
                     
-                    with _thinking_ctx():
-                        response = await agent_loop.process_direct(user_input, session_id)
+                    ctx = _thinking_ctx()
+                    with ctx:
+                        callback = ctx.get_callback() if hasattr(ctx, "get_callback") else None
+                        response = await agent_loop.process_direct(
+                            user_input, session_id, status_callback=callback
+                        )
                     _print_agent_response(response, render_markdown=markdown)
                 except KeyboardInterrupt:
                     _restore_terminal()

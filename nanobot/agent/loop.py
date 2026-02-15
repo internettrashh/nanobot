@@ -3,7 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from loguru import logger
 
@@ -17,6 +17,7 @@ from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.spawn import SpawnTool
+from nanobot.agent.tools.subagent_status import SubagentStatusTool
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.subagent import SubagentManager
@@ -50,6 +51,8 @@ class AgentLoop:
         cron_service: "CronService | None" = None,
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
+        supermemory_api_key: str | None = None,
+        supermemory_container_tag: str = "nanobot",
     ):
         from nanobot.config.schema import ExecToolConfig
         from nanobot.cron.service import CronService
@@ -66,7 +69,11 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
 
-        self.context = ContextBuilder(workspace)
+        self.context = ContextBuilder(
+            workspace,
+            supermemory_api_key=supermemory_api_key,
+            supermemory_container_tag=supermemory_container_tag,
+        )
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -82,6 +89,7 @@ class AgentLoop:
         )
         
         self._running = False
+        self._status_callback: Callable[[str, str, dict], None] | None = None
         self._register_default_tools()
     
     def _register_default_tools(self) -> None:
@@ -111,7 +119,10 @@ class AgentLoop:
         # Spawn tool (for subagents)
         spawn_tool = SpawnTool(manager=self.subagents)
         self.tools.register(spawn_tool)
-        
+
+        # Subagent status tool
+        self.tools.register(SubagentStatusTool(tracker=self.subagents.tracker))
+
         # Cron tool (for scheduling)
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
@@ -145,8 +156,13 @@ class AgentLoop:
         final_content = None
         tools_used: list[str] = []
 
+        def _status(phase: str, detail: str = "", meta: dict | None = None) -> None:
+            if self._status_callback:
+                self._status_callback(phase, detail, meta or {})
+
         while iteration < self.max_iterations:
             iteration += 1
+            _status("thinking", "", {"iteration": str(iteration)})
 
             response = await self.provider.chat(
                 messages=messages,
@@ -177,15 +193,18 @@ class AgentLoop:
                     tools_used.append(tool_call.name)
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
+                    _status("tool_start", tool_call.name, tool_call.arguments)
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
+                    _status("tool_end", tool_call.name)
                 messages.append({"role": "user", "content": "Reflect on the results and decide next steps."})
             else:
                 final_content = response.content
                 break
 
+        _status("done")
         return final_content, tools_used
 
     async def run(self) -> None:
@@ -258,7 +277,17 @@ class AgentLoop:
                                   content="New session started. Memory consolidation in progress.")
         if cmd == "/help":
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
-                                  content="🐈 nanobot commands:\n/new — Start a new conversation\n/help — Show available commands")
+                                  content="🐈 nanobot commands:\n/new — Start a new conversation\n/agents — Show running subagents\n/help — Show available commands")
+        if cmd == "/agents":
+            running = self.subagents.tracker.get_running()
+            if not running:
+                return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
+                                      content="No subagents currently running.")
+            lines = []
+            for a in running:
+                lines.append(f"[{a.task_id}] {a.label} — {a.display_status} ({a.elapsed_seconds:.0f}s)")
+            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
+                                  content="Running subagents:\n" + "\n".join(lines))
         
         if len(session.messages) > self.memory_window:
             asyncio.create_task(self._consolidate_memory(session))
@@ -419,25 +448,30 @@ Respond with ONLY valid JSON, no markdown fences."""
         session_key: str = "cli:direct",
         channel: str = "cli",
         chat_id: str = "direct",
+        status_callback: Callable[[str, str, dict], None] | None = None,
     ) -> str:
         """
         Process a message directly (for CLI or cron usage).
-        
+
         Args:
             content: The message content.
             session_key: Session identifier (overrides channel:chat_id for session lookup).
             channel: Source channel (for tool context routing).
             chat_id: Source chat ID (for tool context routing).
-        
+            status_callback: Optional callback for reporting activity status.
+
         Returns:
             The agent's response.
         """
-        msg = InboundMessage(
-            channel=channel,
-            sender_id="user",
-            chat_id=chat_id,
-            content=content
-        )
-        
-        response = await self._process_message(msg, session_key=session_key)
-        return response.content if response else ""
+        self._status_callback = status_callback
+        try:
+            msg = InboundMessage(
+                channel=channel,
+                sender_id="user",
+                chat_id=chat_id,
+                content=content
+            )
+            response = await self._process_message(msg, session_key=session_key)
+            return response.content if response else ""
+        finally:
+            self._status_callback = None

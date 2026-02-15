@@ -216,10 +216,17 @@ class ExecToolConfig(BaseModel):
     timeout: int = 60
 
 
+class SupermemoryConfig(BaseModel):
+    """Supermemory integration configuration."""
+    api_key: str = ""
+    container_tag: str = "nanobot"
+
+
 class ToolsConfig(BaseModel):
     """Tools configuration."""
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
+    supermemory: SupermemoryConfig = Field(default_factory=SupermemoryConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
 
 

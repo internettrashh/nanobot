@@ -20,9 +20,18 @@ class ContextBuilder:
     
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
     
-    def __init__(self, workspace: Path):
+    def __init__(
+        self,
+        workspace: Path,
+        supermemory_api_key: str | None = None,
+        supermemory_container_tag: str = "nanobot",
+    ):
         self.workspace = workspace
-        self.memory = MemoryStore(workspace)
+        self.memory = MemoryStore(
+            workspace,
+            supermemory_api_key=supermemory_api_key,
+            container_tag=supermemory_container_tag,
+        )
         self.skills = SkillsLoader(workspace)
     
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
@@ -88,6 +97,7 @@ You are nanobot, a helpful AI assistant. You have access to tools that allow you
 - Search the web and fetch web pages
 - Send messages to users on chat channels
 - Spawn subagents for complex background tasks
+- Check on running subagents and their progress
 
 ## Current Time
 {now} ({tz})
@@ -150,6 +160,13 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         system_prompt = self.build_system_prompt(skill_names)
         if channel and chat_id:
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
+
+        # Enrich with supermemory semantic recall based on current message
+        recalled = self.memory.search(current_message)
+        if recalled:
+            recalled_text = "\n\n".join(recalled[:3])
+            system_prompt += f"\n\n---\n\n## Recalled Context (from memory)\n{recalled_text}"
+
         messages.append({"role": "system", "content": system_prompt})
 
         # History
