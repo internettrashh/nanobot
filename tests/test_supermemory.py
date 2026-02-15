@@ -123,3 +123,21 @@ def test_search_respects_limit(workspace, mock_sm_client):
 
     found = store.search("query", limit=3)
     assert len(found) == 3
+
+
+def test_search_extracts_from_chunks(workspace):
+    """When result.content is None, extract from result.chunks."""
+    client = MagicMock()
+    chunk = MagicMock()
+    chunk.content = "recalled from chunks"
+    result_obj = MagicMock()
+    result_obj.content = None  # top-level is None
+    result_obj.chunks = [chunk]
+    client.search.documents.return_value = MagicMock(results=[result_obj])
+
+    store = MemoryStore(workspace)
+    store._sm_client = client
+    store._container_tag = "test"
+
+    found = store.search("query")
+    assert found == ["recalled from chunks"]

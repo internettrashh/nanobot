@@ -91,11 +91,17 @@ class MemoryStore:
                 container_tags=[self._container_tag],
             )
             results = response.results or []
-            return [
-                r.content
-                for r in results[:limit]
-                if hasattr(r, "content") and r.content
-            ]
+            contents = []
+            for r in results[:limit]:
+                # Try top-level content first, then extract from chunks
+                if hasattr(r, "content") and r.content:
+                    contents.append(r.content)
+                elif hasattr(r, "chunks") and r.chunks:
+                    for chunk in r.chunks:
+                        if hasattr(chunk, "content") and chunk.content:
+                            contents.append(chunk.content)
+                            break
+            return contents
         except Exception as e:
             logger.debug(f"Supermemory search failed: {e}")
             return []
