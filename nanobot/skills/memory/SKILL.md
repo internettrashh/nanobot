@@ -1,6 +1,6 @@
 ---
 name: memory
-description: Two-layer memory system with grep-based recall.
+description: Two-layer memory system with automatic cloud recall when available.
 always: true
 ---
 
@@ -9,15 +9,16 @@ always: true
 ## Structure
 
 - `memory/MEMORY.md` — Long-term facts (preferences, project context, relationships). Always loaded into your context.
-- `memory/HISTORY.md` — Append-only event log. NOT loaded into context. Search it with grep.
+- `memory/HISTORY.md` — Append-only event log.
 
-## Search Past Events
+## Recall
 
+If cloud memory is active (you'll see a "Recalled Context" section in your context), recall is **fully automatic** — relevant memories are injected every turn. Do NOT manually read MEMORY.md or grep HISTORY.md; that data is already available to you.
+
+If cloud memory is not active, search past events manually:
 ```bash
 grep -i "keyword" memory/HISTORY.md
 ```
-
-Use the `exec` tool to run grep. Combine patterns: `grep -iE "meeting|deadline" memory/HISTORY.md`
 
 ## When to Update MEMORY.md
 

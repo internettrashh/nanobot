@@ -240,3 +240,32 @@ async def test_edit_file_tool_no_callback_for_other_files(workspace):
     tool = EditFileTool(on_memory_write=on_write)
     await tool.execute(path=str(other_file), old_text="hello", new_text="goodbye")
     assert len(calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# System prompt: conditional memory instructions
+# ---------------------------------------------------------------------------
+
+
+def test_system_prompt_with_supermemory_says_automatic(workspace):
+    """When supermemory is active, system prompt tells agent recall is automatic."""
+    from nanobot.agent.context import ContextBuilder
+
+    ctx = ContextBuilder(workspace)
+    ctx.memory._sm_client = MagicMock()  # fake supermemory client
+
+    prompt = ctx.build_system_prompt()
+    assert "cloud-backed" in prompt
+    assert "Recall is automatic" in prompt
+    assert "Do NOT use read_file" in prompt
+
+
+def test_system_prompt_without_supermemory_says_grep(workspace):
+    """Without supermemory, system prompt tells agent to grep HISTORY.md."""
+    from nanobot.agent.context import ContextBuilder
+
+    ctx = ContextBuilder(workspace)
+    assert not ctx.memory.has_supermemory
+
+    prompt = ctx.build_system_prompt()
+    assert "grep" in prompt.lower() or "HISTORY.md" in prompt
