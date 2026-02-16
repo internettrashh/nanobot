@@ -96,9 +96,15 @@ class AgentLoop:
         """Register the default set of tools."""
         # File tools (restrict to workspace if configured)
         allowed_dir = self.workspace if self.restrict_to_workspace else None
+
+        # Callback: when agent writes MEMORY.md/HISTORY.md via file tools,
+        # sync the content to supermemory cloud layer.
+        def _on_memory_write(memory_type: str, content: str) -> None:
+            self.context.memory.sync_to_cloud(content, memory_type)
+
         self.tools.register(ReadFileTool(allowed_dir=allowed_dir))
-        self.tools.register(WriteFileTool(allowed_dir=allowed_dir))
-        self.tools.register(EditFileTool(allowed_dir=allowed_dir))
+        self.tools.register(WriteFileTool(allowed_dir=allowed_dir, on_memory_write=_on_memory_write))
+        self.tools.register(EditFileTool(allowed_dir=allowed_dir, on_memory_write=_on_memory_write))
         self.tools.register(ListDirTool(allowed_dir=allowed_dir))
         
         # Shell tool
@@ -370,7 +376,7 @@ class AgentLoop:
             archive_all: If True, clear all messages and reset session (for /new command).
                        If False, only write to files without modifying session.
         """
-        memory = MemoryStore(self.workspace)
+        memory = self.context.memory
 
         if archive_all:
             old_messages = session.messages

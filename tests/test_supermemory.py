@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nanobot.agent.memory import MemoryStore
+from nanobot.agent.tools.filesystem import WriteFileTool, EditFileTool
 
 
 @pytest.fixture
@@ -141,3 +142,101 @@ def test_search_extracts_from_chunks(workspace):
 
     found = store.search("query")
     assert found == ["recalled from chunks"]
+
+
+# ---------------------------------------------------------------------------
+# sync_to_cloud
+# ---------------------------------------------------------------------------
+
+
+def test_sync_to_cloud_calls_sm_add(store_with_sm, mock_sm_client):
+    store_with_sm.sync_to_cloud("cloud only content", "long_term")
+    mock_sm_client.add.assert_called_once_with(
+        content="cloud only content",
+        container_tags=["test"],
+        metadata={"type": "long_term_memory"},
+    )
+
+
+def test_sync_to_cloud_noop_without_supermemory(workspace):
+    store = MemoryStore(workspace)
+    # Should not raise
+    store.sync_to_cloud("content", "history")
+
+
+# ---------------------------------------------------------------------------
+# File tool → supermemory sync via on_memory_write callback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_file_tool_syncs_memory_md(workspace):
+    """WriteFileTool fires on_memory_write when writing MEMORY.md."""
+    calls = []
+    def on_write(mem_type, content):
+        calls.append((mem_type, content))
+
+    tool = WriteFileTool(on_memory_write=on_write)
+    mem_path = str(workspace / "memory" / "MEMORY.md")
+    await tool.execute(path=mem_path, content="user likes tea")
+    assert len(calls) == 1
+    assert calls[0] == ("long_term", "user likes tea")
+
+
+@pytest.mark.asyncio
+async def test_write_file_tool_syncs_history_md(workspace):
+    """WriteFileTool fires on_memory_write when writing HISTORY.md."""
+    calls = []
+    def on_write(mem_type, content):
+        calls.append((mem_type, content))
+
+    tool = WriteFileTool(on_memory_write=on_write)
+    hist_path = str(workspace / "memory" / "HISTORY.md")
+    await tool.execute(path=hist_path, content="[2026-02-15] event")
+    assert len(calls) == 1
+    assert calls[0] == ("history", "[2026-02-15] event")
+
+
+@pytest.mark.asyncio
+async def test_write_file_tool_no_callback_for_other_files(workspace):
+    """WriteFileTool does NOT fire on_memory_write for non-memory files."""
+    calls = []
+    def on_write(mem_type, content):
+        calls.append((mem_type, content))
+
+    tool = WriteFileTool(on_memory_write=on_write)
+    other_path = str(workspace / "notes.txt")
+    await tool.execute(path=other_path, content="random")
+    assert len(calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_edit_file_tool_syncs_memory_md(workspace):
+    """EditFileTool fires on_memory_write when editing MEMORY.md."""
+    # Write initial content
+    mem_file = workspace / "memory" / "MEMORY.md"
+    mem_file.write_text("old fact", encoding="utf-8")
+
+    calls = []
+    def on_write(mem_type, content):
+        calls.append((mem_type, content))
+
+    tool = EditFileTool(on_memory_write=on_write)
+    await tool.execute(path=str(mem_file), old_text="old fact", new_text="new fact")
+    assert len(calls) == 1
+    assert calls[0] == ("long_term", "new fact")
+
+
+@pytest.mark.asyncio
+async def test_edit_file_tool_no_callback_for_other_files(workspace):
+    """EditFileTool does NOT fire on_memory_write for non-memory files."""
+    other_file = workspace / "data.txt"
+    other_file.write_text("hello world", encoding="utf-8")
+
+    calls = []
+    def on_write(mem_type, content):
+        calls.append((mem_type, content))
+
+    tool = EditFileTool(on_memory_write=on_write)
+    await tool.execute(path=str(other_file), old_text="hello", new_text="goodbye")
+    assert len(calls) == 0

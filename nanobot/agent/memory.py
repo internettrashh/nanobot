@@ -112,6 +112,19 @@ class MemoryStore:
         return self._sm_client is not None
 
     # ------------------------------------------------------------------
+    # Supermemory — cloud sync
+    # ------------------------------------------------------------------
+
+    def sync_to_cloud(self, content: str, memory_type: str = "long_term") -> None:
+        """Sync content to supermemory without writing the local file.
+
+        Use this when the local file was already written by another path
+        (e.g. the write_file or edit_file tool) and only the cloud layer
+        needs updating.
+        """
+        self._sm_add(content, metadata={"type": f"{memory_type}_memory"})
+
+    # ------------------------------------------------------------------
     # Supermemory — internal helpers
     # ------------------------------------------------------------------
 

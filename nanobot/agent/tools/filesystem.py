@@ -1,9 +1,22 @@
 """File system tools: read, write, edit."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from nanobot.agent.tools.base import Tool
+
+# Callback signature: (memory_type: "long_term"|"history", content: str) -> None
+MemoryWriteCallback = Callable[[str, str], None]
+
+
+def _is_memory_file(file_path: Path) -> str | None:
+    """Return the memory type if path is a memory file, else None."""
+    name = file_path.name
+    if name == "MEMORY.md" and file_path.parent.name == "memory":
+        return "long_term"
+    if name == "HISTORY.md" and file_path.parent.name == "memory":
+        return "history"
+    return None
 
 
 def _resolve_path(path: str, allowed_dir: Path | None = None) -> Path:
@@ -59,9 +72,14 @@ class ReadFileTool(Tool):
 
 class WriteFileTool(Tool):
     """Tool to write content to a file."""
-    
-    def __init__(self, allowed_dir: Path | None = None):
+
+    def __init__(
+        self,
+        allowed_dir: Path | None = None,
+        on_memory_write: MemoryWriteCallback | None = None,
+    ):
         self._allowed_dir = allowed_dir
+        self._on_memory_write = on_memory_write
 
     @property
     def name(self) -> str:
@@ -93,6 +111,11 @@ class WriteFileTool(Tool):
             file_path = _resolve_path(path, self._allowed_dir)
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
+            # Sync memory files to supermemory cloud
+            if self._on_memory_write:
+                mem_type = _is_memory_file(file_path)
+                if mem_type:
+                    self._on_memory_write(mem_type, content)
             return f"Successfully wrote {len(content)} bytes to {path}"
         except PermissionError as e:
             return f"Error: {e}"
@@ -102,9 +125,14 @@ class WriteFileTool(Tool):
 
 class EditFileTool(Tool):
     """Tool to edit a file by replacing text."""
-    
-    def __init__(self, allowed_dir: Path | None = None):
+
+    def __init__(
+        self,
+        allowed_dir: Path | None = None,
+        on_memory_write: MemoryWriteCallback | None = None,
+    ):
         self._allowed_dir = allowed_dir
+        self._on_memory_write = on_memory_write
 
     @property
     def name(self) -> str:
@@ -153,7 +181,11 @@ class EditFileTool(Tool):
             
             new_content = content.replace(old_text, new_text, 1)
             file_path.write_text(new_content, encoding="utf-8")
-            
+            # Sync memory files to supermemory cloud
+            if self._on_memory_write:
+                mem_type = _is_memory_file(file_path)
+                if mem_type:
+                    self._on_memory_write(mem_type, new_content)
             return f"Successfully edited {path}"
         except PermissionError as e:
             return f"Error: {e}"
